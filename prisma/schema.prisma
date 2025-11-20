@@ -1,0 +1,60 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+// Modèle pour le bâtiment
+model Building {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  name        String
+  totalFloors Int      // Nombre total d'étages (ex: 10 = RDC + 9 étages)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  elevators   Elevator[]
+  requests    Request[]
+
+  @@map("buildings")
+}
+
+// Modèle pour l'ascenseur
+model Elevator {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  buildingId   String   @db.ObjectId
+  building     Building @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+  name         String   // Ex: "Ascenseur A", "Ascenseur B"
+  currentFloor Int      @default(0) // Étage actuel (0 = RDC)
+  status       String   @default("idle") // idle, moving_up, moving_down, maintenance
+  direction    String?  // "up", "down", null
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  requests     Request[]
+
+  @@map("elevators")
+}
+
+// Modèle pour les demandes d'ascenseur
+model Request {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  buildingId  String   @db.ObjectId
+  building    Building @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+  elevatorId  String?  @db.ObjectId
+  elevator    Elevator? @relation(fields: [elevatorId], references: [id], onDelete: SetNull)
+  fromFloor   Int      // Étage de départ
+  toFloor     Int      // Étage de destination
+  status      String   @default("pending") // pending, assigned, in_progress, completed, cancelled
+  priority    Int      @default(0) // Priorité (plus élevé = plus prioritaire)
+  createdAt   DateTime @default(now())
+  completedAt DateTime?
+  notes       String?
+
+  @@map("requests")
+  @@index([buildingId, status])
+  @@index([elevatorId, status])
+}
