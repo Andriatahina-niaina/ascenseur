@@ -20,6 +20,16 @@
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/api/request/route.js"
+    ],
+    "/api/elevator/[id]/move/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/elevator/[id]/move/route.js"
+    ],
+    "/api/elevator/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/elevator/route.js"
     ]
   }
 }
