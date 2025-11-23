@@ -32,6 +32,11 @@ export async function GET() {
         include: {
           elevators: {
             include: {
+              passengers: {
+                where: {
+                  status: "in_elevator",
+                },
+              },
               _count: {
                 select: {
                   requests: {
@@ -39,6 +44,11 @@ export async function GET() {
                       status: {
                         in: ["pending", "assigned", "in_progress"],
                       },
+                    },
+                  },
+                  passengers: {
+                    where: {
+                      status: "in_elevator",
                     },
                   },
                 },

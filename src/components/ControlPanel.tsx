@@ -1,10 +1,18 @@
 "use client";
 
 import { useState } from "react";
-import { Card, Space, Typography, Button, message, Modal, InputNumber } from "antd";
-import { PhoneOutlined } from "@ant-design/icons";
+import { Card, Space, Typography, Button, message, Modal, InputNumber, Input, List, Tag } from "antd";
+import { PhoneOutlined, UserAddOutlined, EditOutlined } from "@ant-design/icons";
 
 const { Title, Text } = Typography;
+
+interface Passenger {
+  id: string;
+  name: string;
+  currentFloor: number;
+  destinationFloor: number;
+  status: string;
+}
 
 interface ControlPanelProps {
   elevator: {
@@ -12,6 +20,7 @@ interface ControlPanelProps {
     name: string;
     currentFloor: number;
     status: string;
+    passengers?: Passenger[];
   };
   buildingId: string;
   totalFloors: number;
@@ -28,6 +37,12 @@ export default function ControlPanel({
   const [callModalVisible, setCallModalVisible] = useState(false);
   const [selectedFloor, setSelectedFloor] = useState<number | null>(null);
   const [destinationFloor, setDestinationFloor] = useState<number | null>(null);
+  const [addPassengerModalVisible, setAddPassengerModalVisible] = useState(false);
+  const [newPassengerName, setNewPassengerName] = useState("");
+  const [newPassengerDestination, setNewPassengerDestination] = useState<number | null>(null);
+  const [editPassengerModalVisible, setEditPassengerModalVisible] = useState(false);
+  const [editingPassenger, setEditingPassenger] = useState<Passenger | null>(null);
+  const [editDestination, setEditDestination] = useState<number | null>(null);
 
   const handleFloorClick = async (floor: number) => {
     if (floor === elevator.currentFloor) {
@@ -37,7 +52,7 @@ export default function ControlPanel({
 
     setLoading(true);
     try {
-      // Créer la demande
+      // Créer une demande pour cet étage (cela permettra à l'ascenseur de s'y arrêter)
       const requestResponse = await fetch("/api/request", {
         method: "POST",
         headers: {
@@ -57,53 +72,10 @@ export default function ControlPanel({
         return;
       }
 
-      message.success(`Ascenseur en route vers l'étage ${floor === 0 ? "RDC" : floor}`);
-      
-      // Simuler le mouvement de l'ascenseur étape par étape
-      const startFloor = elevator.currentFloor;
-      const endFloor = floor;
-      const step = startFloor < endFloor ? 1 : -1;
-      const totalSteps = Math.abs(endFloor - startFloor);
-      
-      // Déplacer l'ascenseur progressivement
-      for (let i = 1; i <= totalSteps; i++) {
-        const currentStepFloor = startFloor + (step * i);
-        
-        // Attendre un peu avant chaque mouvement (simulation)
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        
-        // Mettre à jour l'ascenseur
-        const moveResponse = await fetch(`/api/elevator/${elevator.id}/move`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            targetFloor: currentStepFloor,
-          }),
-        });
-
-        if (moveResponse.ok) {
-          // Rafraîchir les données
-          onUpdate();
-        }
-      }
-      
-      // Dernière mise à jour pour s'assurer que l'ascenseur est à l'étage final
-      await fetch(`/api/elevator/${elevator.id}/move`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          targetFloor: endFloor,
-        }),
-      });
-      
-      message.success(`Ascenseur arrivé à l'étage ${floor === 0 ? "RDC" : floor}`);
+      message.success(`Demande créée pour l'étage ${floor === 0 ? "RDC" : floor}. L'ascenseur s'y arrêtera.`);
       onUpdate();
     } catch (error) {
-      message.error("Erreur lors du déplacement de l'ascenseur");
+      message.error("Erreur lors de la création de la demande");
       console.error(error);
     } finally {
       setLoading(false);
@@ -226,17 +198,154 @@ export default function ControlPanel({
     }
   };
 
+  const handleAddPassenger = async () => {
+    if (!newPassengerDestination && newPassengerDestination !== 0) {
+      message.warning("Veuillez sélectionner une destination");
+      return;
+    }
+
+    if (newPassengerDestination === elevator.currentFloor) {
+      message.warning("La destination doit être différente de l'étage actuel");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const response = await fetch("/api/passenger", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          elevatorId: elevator.id,
+          buildingId: buildingId,
+          name: newPassengerName || `Passager ${Date.now()}`,
+          currentFloor: elevator.currentFloor,
+          destinationFloor: newPassengerDestination,
+        }),
+      });
+
+      if (!response.ok) {
+        message.error("Erreur lors de l'ajout du passager");
+        setLoading(false);
+        return;
+      }
+
+      message.success("Passager ajouté dans l'ascenseur");
+      setAddPassengerModalVisible(false);
+      setNewPassengerName("");
+      setNewPassengerDestination(null);
+      
+      // Démarrer automatiquement l'ascenseur s'il est idle
+      if (elevator.status === "idle") {
+        const elevatorResponse = await fetch(`/api/elevator/${elevator.id}`);
+        const elevatorData = await elevatorResponse.json();
+        if (elevatorData.status === "idle") {
+          // Déterminer la direction
+          const direction = elevator.currentFloor < newPassengerDestination ? "up" : "down";
+          await fetch(`/api/elevator/${elevator.id}`, {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              id: elevator.id,
+              status: direction === "up" ? "moving_up" : "moving_down",
+              direction: direction,
+            }),
+          });
+        }
+      }
+      
+      onUpdate();
+    } catch (error) {
+      message.error("Erreur lors de l'ajout du passager");
+      console.error(error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleEditPassengerDestination = async () => {
+    if (!editingPassenger || !editDestination && editDestination !== 0) {
+      return;
+    }
+
+    if (editDestination === elevator.currentFloor) {
+      message.warning("La destination doit être différente de l'étage actuel");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const response = await fetch(`/api/passenger/${editingPassenger.id}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          destinationFloor: editDestination,
+        }),
+      });
+
+      if (!response.ok) {
+        message.error("Erreur lors de la modification de la destination");
+        setLoading(false);
+        return;
+      }
+
+      message.success("Destination modifiée");
+      setEditPassengerModalVisible(false);
+      setEditingPassenger(null);
+      setEditDestination(null);
+      
+      // Démarrer automatiquement l'ascenseur s'il est idle
+      if (elevator.status === "idle") {
+        const elevatorResponse = await fetch(`/api/elevator/${elevator.id}`);
+        const elevatorData = await elevatorResponse.json();
+        if (elevatorData.status === "idle") {
+          // Déterminer la direction
+          const direction = elevator.currentFloor < editDestination ? "up" : "down";
+          await fetch(`/api/elevator/${elevator.id}`, {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              id: elevator.id,
+              status: direction === "up" ? "moving_up" : "moving_down",
+              direction: direction,
+            }),
+          });
+        }
+      }
+      
+      onUpdate();
+    } catch (error) {
+      message.error("Erreur lors de la modification de la destination");
+      console.error(error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const openEditModal = (passenger: Passenger) => {
+    setEditingPassenger(passenger);
+    setEditDestination(passenger.destinationFloor);
+    setEditPassengerModalVisible(true);
+  };
+
   return (
     <>
       <Card 
-        className="shadow-2xl bg-slate-800 border-slate-700"
-        title={<Title level={4} className="!mb-0 text-white">Panneau de contrôle</Title>}
+        className="shadow-2xl bg-gradient-to-br from-slate-800 to-slate-900 border-slate-700"
+        title={<Title level={4} className="!mb-0 text-white">🎛️ Panneau de contrôle de l'ascenseur</Title>}
       >
         <Space direction="vertical" size="large" className="w-full">
-          {/* Boutons à l'intérieur de l'ascenseur */}
-          <div>
-            <Text strong className="block mb-4 text-slate-300 text-lg">🚪 Sélectionner l'étage (depuis l'ascenseur)</Text>
-            <div className="grid grid-cols-5 gap-3">
+          {/* Panneau de boutons d'étage - Style ascenseur réel */}
+          <div className="bg-slate-900 rounded-xl p-6 border-4 border-slate-600 shadow-inner">
+            <Text strong className="block mb-4 text-slate-200 text-lg text-center">Boutons d'étage</Text>
+            <div className="grid grid-cols-5 gap-2">
               {Array.from({ length: totalFloors }, (_, i) => {
                 const floorNum = totalFloors - 1 - i;
                 const isCurrentFloor = floorNum === elevator.currentFloor;
@@ -247,11 +356,14 @@ export default function ControlPanel({
                     size="large"
                     onClick={() => handleFloorClick(floorNum)}
                     disabled={loading || elevator.status === "maintenance"}
-                    className={`h-16 text-lg font-bold ${
+                    className={`h-14 text-base font-bold transition-all ${
                       isCurrentFloor 
-                        ? "bg-blue-600 hover:bg-blue-700 border-blue-500 shadow-lg shadow-blue-500/50" 
-                        : "bg-slate-700 hover:bg-slate-600 border-slate-600 text-white"
+                        ? "bg-blue-600 hover:bg-blue-700 border-2 border-blue-400 shadow-lg shadow-blue-500/50 scale-105 ring-2 ring-blue-300" 
+                        : "bg-slate-700 hover:bg-slate-600 border-2 border-slate-500 text-white hover:scale-105"
                     }`}
+                    style={{
+                      borderRadius: "8px"
+                    }}
                   >
                     {floorNum === 0 ? "RDC" : floorNum}
                   </Button>
@@ -271,6 +383,50 @@ export default function ControlPanel({
             >
               📞 Appeler l'ascenseur depuis un étage
             </Button>
+          </div>
+
+          {/* Section pour ajouter des passagers */}
+          <div className="bg-slate-900 rounded-xl p-4 border-2 border-slate-600">
+            <div className="flex justify-between items-center mb-4">
+              <Text strong className="text-slate-200 text-base">👥 Passagers</Text>
+              <Button
+                type="primary"
+                size="small"
+                icon={<UserAddOutlined />}
+                onClick={() => setAddPassengerModalVisible(true)}
+                className="bg-purple-600 hover:bg-purple-700 border-purple-500"
+              >
+                + Ajouter
+              </Button>
+            </div>
+            
+            {elevator.passengers && elevator.passengers.length > 0 ? (
+              <div className="space-y-2 max-h-48 overflow-y-auto">
+                {elevator.passengers.map((passenger: Passenger) => (
+                  <div key={passenger.id} className="bg-slate-800 rounded-lg px-3 py-2 border border-slate-600 hover:bg-slate-700 transition-colors">
+                    <div className="flex justify-between items-center">
+                      <div className="flex-1">
+                        <Text className="text-white font-semibold text-sm">{passenger.name}</Text>
+                        <Text className="block text-slate-400 text-xs mt-1">
+                          → {passenger.destinationFloor === 0 ? "RDC" : `Étage ${passenger.destinationFloor}`}
+                        </Text>
+                      </div>
+                      <Button
+                        type="link"
+                        size="small"
+                        icon={<EditOutlined />}
+                        onClick={() => openEditModal(passenger)}
+                        className="text-blue-400 hover:text-blue-300"
+                      >
+                        Modifier
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <Text className="text-slate-500 text-sm text-center block py-4">Aucun passager</Text>
+            )}
           </div>
         </Space>
       </Card>
@@ -318,6 +474,89 @@ export default function ControlPanel({
               parser={(value) => (value === "RDC" ? 0 : Number(value))}
             />
           </div>
+        </Space>
+      </Modal>
+
+      {/* Modal pour ajouter un passager */}
+      <Modal
+        title={<span className="text-lg">👥 Ajouter un passager</span>}
+        open={addPassengerModalVisible}
+        onOk={handleAddPassenger}
+        onCancel={() => {
+          setAddPassengerModalVisible(false);
+          setNewPassengerName("");
+          setNewPassengerDestination(null);
+        }}
+        confirmLoading={loading}
+        okText="Ajouter"
+        cancelText="Annuler"
+        okButtonProps={{ className: "bg-purple-600" }}
+      >
+        <Space direction="vertical" size="large" className="w-full pt-4">
+          <div>
+            <Text strong className="block mb-2">Nom du passager (optionnel)</Text>
+            <Input
+              value={newPassengerName}
+              onChange={(e) => setNewPassengerName(e.target.value)}
+              placeholder="Nom du passager"
+              size="large"
+            />
+          </div>
+          <div>
+            <Text strong className="block mb-2">Destination</Text>
+            <InputNumber
+              min={0}
+              max={totalFloors - 1}
+              value={newPassengerDestination}
+              onChange={(value) => setNewPassengerDestination(value)}
+              placeholder="Sélectionner l'étage de destination"
+              className="w-full"
+              size="large"
+              formatter={(value) => value === 0 ? "RDC" : String(value)}
+              parser={(value) => (value === "RDC" ? 0 : Number(value))}
+            />
+          </div>
+        </Space>
+      </Modal>
+
+      {/* Modal pour modifier la destination d'un passager */}
+      <Modal
+        title={<span className="text-lg">✏️ Modifier la destination</span>}
+        open={editPassengerModalVisible}
+        onOk={handleEditPassengerDestination}
+        onCancel={() => {
+          setEditPassengerModalVisible(false);
+          setEditingPassenger(null);
+          setEditDestination(null);
+        }}
+        confirmLoading={loading}
+        okText="Modifier"
+        cancelText="Annuler"
+        okButtonProps={{ className: "bg-blue-600" }}
+      >
+        <Space direction="vertical" size="large" className="w-full pt-4">
+          {editingPassenger && (
+            <>
+              <div>
+                <Text strong className="block mb-2">Passager</Text>
+                <Text>{editingPassenger.name}</Text>
+              </div>
+              <div>
+                <Text strong className="block mb-2">Nouvelle destination</Text>
+                <InputNumber
+                  min={0}
+                  max={totalFloors - 1}
+                  value={editDestination}
+                  onChange={(value) => setEditDestination(value)}
+                  placeholder="Sélectionner l'étage de destination"
+                  className="w-full"
+                  size="large"
+                  formatter={(value) => value === 0 ? "RDC" : String(value)}
+                  parser={(value) => (value === "RDC" ? 0 : Number(value))}
+                />
+              </div>
+            </>
+          )}
         </Space>
       </Modal>
     </>

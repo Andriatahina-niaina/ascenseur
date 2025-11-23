@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { Card, Space, Typography, Badge } from "antd";
 import { 
   UpOutlined, 
@@ -11,10 +12,8 @@ const { Title, Text } = Typography;
 
 interface Passenger {
   id: string;
-  name: string;
-  currentFloor: number;
   destinationFloor: number;
-  status: string;
+  enteredAt: number;
 }
 
 interface ElevatorVisualizationProps {
@@ -24,22 +23,135 @@ interface ElevatorVisualizationProps {
     currentFloor: number;
     status: string;
     direction: string | null;
-    passengers?: Passenger[];
-    _count?: {
-      passengers?: number;
-    };
   };
   totalFloors: number;
-  waitingPassengers?: Passenger[]; // Passagers qui attendent aux étages
+  passengers: Passenger[]; // Passagers en mémoire
+  onUpdate?: () => void;
 }
 
 export default function ElevatorVisualization({ 
   elevator, 
   totalFloors,
-  waitingPassengers = []
+  passengers = [],
+  onUpdate
 }: ElevatorVisualizationProps) {
-  const passengersInElevator = elevator.passengers || [];
-  const passengerCount = passengersInElevator.length || elevator._count?.passengers || 0;
+  const passengerCount = passengers.length;
+  const [isMoving, setIsMoving] = useState(false);
+
+  // Système de mouvement automatique (seulement si l'ascenseur est déjà en mouvement)
+  useEffect(() => {
+    if (elevator.status === "moving_up" || elevator.status === "moving_down") {
+      setIsMoving(true);
+      const interval = setInterval(async () => {
+        try {
+          // Trouver la prochaine destination
+          let nextFloor: number | null = null;
+          
+          if (passengers.length > 0) {
+            const destinations = passengers.map(p => p.destinationFloor);
+            
+            if (elevator.direction === "up") {
+              const goingUp = destinations.filter(d => d > elevator.currentFloor);
+              if (goingUp.length > 0) {
+                nextFloor = Math.min(...goingUp);
+              } else {
+                // Plus de destinations vers le haut, changer de direction
+                const goingDown = destinations.filter(d => d <= elevator.currentFloor);
+                if (goingDown.length > 0) {
+                  nextFloor = Math.max(...goingDown);
+                }
+              }
+            } else if (elevator.direction === "down") {
+              const goingDown = destinations.filter(d => d <= elevator.currentFloor);
+              if (goingDown.length > 0) {
+                nextFloor = Math.max(...goingDown);
+              } else {
+                // Plus de destinations vers le bas, changer de direction
+                const goingUp = destinations.filter(d => d > elevator.currentFloor);
+                if (goingUp.length > 0) {
+                  nextFloor = Math.min(...goingUp);
+                }
+              }
+            } else {
+              // Pas de direction, choisir la destination la plus proche
+              const closest = destinations.reduce((closest, current) => 
+                Math.abs(current - elevator.currentFloor) < Math.abs(closest - elevator.currentFloor) 
+                  ? current : closest
+              );
+              nextFloor = closest;
+            }
+          }
+
+          // Si on est déjà à la destination, ne pas bouger
+          if (nextFloor === elevator.currentFloor) {
+            // Vérifier s'il y a des passagers à destination
+            const passengersAtFloor = passengers.filter(p => p.destinationFloor === elevator.currentFloor);
+            if (passengersAtFloor.length === 0) {
+              // Plus de destinations, arrêter
+              await fetch(`/api/elevator`, {
+                method: "PUT",
+                headers: {
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  id: elevator.id,
+                  status: "idle",
+                  direction: null,
+                }),
+              });
+              if (onUpdate) onUpdate();
+            }
+            return;
+          }
+
+          if (!nextFloor) {
+            // Plus de destinations, arrêter
+            await fetch(`/api/elevator`, {
+              method: "PUT",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                id: elevator.id,
+                status: "idle",
+                direction: null,
+              }),
+            });
+            if (onUpdate) onUpdate();
+            return;
+          }
+
+          // Déplacer d'un étage à la fois
+          const step = elevator.currentFloor < nextFloor ? 1 : -1;
+          const newFloor = elevator.currentFloor + step;
+          const direction = elevator.currentFloor < newFloor ? "up" : "down";
+
+          // Mettre à jour l'ascenseur
+          await fetch(`/api/elevator`, {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              id: elevator.id,
+              currentFloor: newFloor,
+              status: direction === "up" ? "moving_up" : "moving_down",
+              direction: direction,
+            }),
+          });
+
+          if (onUpdate) onUpdate();
+        } catch (error) {
+          console.error("Error auto-moving:", error);
+        }
+      }, 1500); // Déplacer toutes les 1.5 secondes
+
+      return () => clearInterval(interval);
+    } else {
+      setIsMoving(false);
+    }
+  }, [elevator.status, elevator.id, elevator.currentFloor, elevator.direction, passengers, onUpdate]);
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case "idle":
@@ -70,101 +182,149 @@ export default function ElevatorVisualization({
     }
   };
 
+  // Calculer la position verticale de l'ascenseur (0 = haut, 100 = bas)
+  const elevatorPosition = ((totalFloors - 1 - elevator.currentFloor) / (totalFloors - 1)) * 100;
+
   return (
     <Card 
-      className="shadow-2xl bg-slate-800 border-slate-700"
+      className="shadow-2xl bg-gradient-to-br from-slate-800 via-slate-800 to-slate-900 border-slate-700/50 backdrop-blur-sm"
       title={
-        <Space>
-          <Title level={4} className="!mb-0 text-white">{elevator.name}</Title>
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <Space size="middle">
+            <div className="p-2 bg-blue-500/20 rounded-lg">
+              <span className="text-2xl">🚇</span>
+            </div>
+            <div>
+              <Title level={4} className="!mb-0 text-white font-semibold">{elevator.name}</Title>
+              <Text className="text-slate-400 text-xs">Étage {elevator.currentFloor === 0 ? "RDC" : elevator.currentFloor}</Text>
+            </div>
+          </Space>
           <Badge 
             status={getStatusColor(elevator.status) as any}
-            text={<span className="text-slate-300">{getStatusText(elevator.status)}</span>}
+            text={<span className="text-slate-200 font-medium">{getStatusText(elevator.status)}</span>}
+            className="ml-auto"
           />
-        </Space>
+        </div>
       }
     >
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Vue du bâtiment */}
-        <div>
-          <Text className="block mb-3 text-slate-300 font-semibold">Vue du bâtiment</Text>
-          <div className="relative bg-slate-900 rounded-lg p-6 border-4 border-slate-700" style={{ minHeight: "500px" }}>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Vue du bâtiment avec ascenseur */}
+        <div className="lg:col-span-2">
+          <div className="flex items-center gap-2 mb-4">
+            <div className="p-1.5 bg-slate-700/50 rounded-lg">
+              <span className="text-xl">🏢</span>
+            </div>
+            <Text className="text-slate-200 font-semibold text-lg">Vue du bâtiment</Text>
+          </div>
+          <div className="relative bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 rounded-xl p-6 border-2 border-slate-700/50 shadow-2xl shadow-black/50" style={{ minHeight: "650px" }}>
             {/* Structure du bâtiment */}
-            <div className="relative h-full flex flex-col justify-between">
+            <div className="relative h-full">
+              {/* Shaft de l'ascenseur - Plus visible et réaliste */}
+              <div className="absolute left-1/4 w-40 h-full bg-gradient-to-b from-slate-900 via-slate-800 to-slate-900 border-l-4 border-r-4 border-slate-600/80 rounded-lg shadow-2xl shadow-black/40">
+                {/* Lignes verticales pour l'effet de profondeur */}
+                <div className="absolute left-1/2 top-0 bottom-0 w-px bg-slate-600/50"></div>
+                <div className="absolute left-1/4 top-0 bottom-0 w-px bg-slate-600/30"></div>
+                <div className="absolute right-1/4 top-0 bottom-0 w-px bg-slate-600/30"></div>
+                {/* Ascenseur mobile - Plus réaliste */}
+                <div 
+                  className="absolute left-3 right-3 bg-gradient-to-br from-blue-600 via-blue-500 to-blue-700 rounded-lg shadow-2xl border-4 border-blue-400 transition-all duration-1000 ease-in-out"
+                  style={{
+                    height: `${100 / totalFloors}%`,
+                    bottom: `${elevatorPosition}%`,
+                    boxShadow: isMoving 
+                      ? "0 0 50px rgba(59, 130, 246, 1), 0 0 100px rgba(59, 130, 246, 0.6), inset 0 0 30px rgba(255, 255, 255, 0.4)" 
+                      : "0 0 30px rgba(59, 130, 246, 0.6), inset 0 0 15px rgba(255, 255, 255, 0.2)",
+                    animation: isMoving ? "pulse 1.5s infinite" : "none",
+                    zIndex: 10
+                  }}
+                >
+                  {/* Portes de l'ascenseur - Plus détaillées */}
+                  <div className="h-full flex items-center justify-center relative overflow-hidden">
+                    {/* Portes avec effet de séparation */}
+                    <div className="absolute inset-0 flex">
+                      <div className="w-1/2 bg-gradient-to-r from-blue-400/40 to-blue-500/20 border-r-4 border-blue-300/60 shadow-inner"></div>
+                      <div className="w-1/2 bg-gradient-to-l from-blue-400/40 to-blue-500/20 border-l-4 border-blue-300/60 shadow-inner"></div>
+                    </div>
+                    {/* Poignées de porte */}
+                    <div className="absolute left-2 top-1/2 -translate-y-1/2 w-1 h-8 bg-blue-300 rounded-full"></div>
+                    <div className="absolute right-2 top-1/2 -translate-y-1/2 w-1 h-8 bg-blue-300 rounded-full"></div>
+                    
+                    {/* Indicateur de direction dans l'ascenseur */}
+                    <div className="absolute top-2 left-1/2 -translate-x-1/2 z-10">
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                        elevator.direction === "up" 
+                          ? "bg-green-500 animate-bounce" 
+                          : elevator.direction === "down" 
+                          ? "bg-orange-500 animate-bounce" 
+                          : "bg-gray-500"
+                      }`}>
+                        {elevator.direction === "up" ? "⬆️" : elevator.direction === "down" ? "⬇️" : "⏸️"}
+                      </div>
+                    </div>
+
+                    {/* Passagers dans l'ascenseur - Triés par ordre d'entrée */}
+                    {passengerCount > 0 && (
+                      <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex flex-wrap gap-1.5 justify-center z-10 px-2">
+                        {passengers
+                          .sort((a, b) => a.enteredAt - b.enteredAt) // Trier par ordre d'entrée
+                          .slice(0, 8)
+                          .map((passenger, index) => (
+                            <div
+                              key={passenger.id}
+                              className="w-6 h-6 bg-gradient-to-br from-yellow-400 to-yellow-500 rounded-full border-2 border-yellow-300 shadow-lg relative"
+                              title={`Passager ${index + 1} → ${passenger.destinationFloor === 0 ? "RDC" : `Étage ${passenger.destinationFloor}`}`}
+                            >
+                              <div className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-yellow-900">
+                                {index + 1}
+                              </div>
+                            </div>
+                          ))}
+                        {passengerCount > 8 && (
+                          <div className="w-6 h-6 bg-yellow-300 rounded-full border-2 border-yellow-200 flex items-center justify-center text-[9px] text-yellow-900 font-bold shadow-lg">
+                            +{passengerCount - 8}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Étages avec numéros */}
               {Array.from({ length: totalFloors }, (_, i) => {
                 const floorNum = totalFloors - 1 - i;
+                const floorPosition = (i / (totalFloors - 1)) * 100;
                 const isCurrentFloor = floorNum === elevator.currentFloor;
                 
                 return (
                   <div
                     key={floorNum}
-                    className="relative flex items-center"
-                    style={{ height: `${100 / totalFloors}%` }}
+                    className="absolute left-0 right-0 flex items-center"
+                    style={{ 
+                      bottom: `${floorPosition}%`,
+                      height: `${100 / totalFloors}%`
+                    }}
                   >
-                    {/* Étage */}
-                    <div className="absolute left-0 top-1/2 -translate-y-1/2 bg-slate-700 px-3 py-1 rounded-l-lg border-2 border-slate-600 z-10">
-                      <Text strong className="text-white">
-                        {floorNum === 0 ? "RDC" : floorNum}
-                      </Text>
+                    {/* Numéro d'étage à gauche - Plus visible */}
+                    <div className={`absolute left-2 px-4 py-2 rounded-xl font-bold text-xl z-20 transition-all ${
+                      isCurrentFloor 
+                        ? "bg-gradient-to-r from-blue-500 to-blue-600 text-white shadow-2xl shadow-blue-500/70 scale-110 ring-4 ring-blue-400/50" 
+                        : "bg-gradient-to-r from-slate-700 to-slate-600 text-slate-300 shadow-md"
+                    }`}>
+                      {floorNum === 0 ? "RDC" : floorNum}
                     </div>
+
+                    {/* Ligne d'étage - Plus épaisse et visible */}
+                    <div className={`absolute left-1/4 right-0 h-1 transition-all ${
+                      isCurrentFloor 
+                        ? "bg-gradient-to-r from-blue-400 via-blue-500 to-blue-400 shadow-lg shadow-blue-400/50" 
+                        : "bg-gradient-to-r from-slate-600 to-slate-500"
+                    }`}></div>
                     
-                    {/* Ligne d'étage */}
-                    <div className="absolute left-12 right-0 top-0 h-px bg-slate-600"></div>
-                    
-                    {/* Cabine d'ascenseur */}
-                    {isCurrentFloor && (
-                      <div 
-                        className="absolute left-16 top-1/2 -translate-y-1/2 w-24 h-20 bg-gradient-to-br from-blue-500 to-blue-600 rounded-lg shadow-2xl border-4 border-blue-400 flex flex-col items-center justify-center z-20 animate-pulse"
-                        style={{
-                          boxShadow: "0 0 30px rgba(59, 130, 246, 0.6), inset 0 0 10px rgba(255, 255, 255, 0.3)"
-                        }}
-                      >
-                        <div className="text-white text-xl font-bold mb-1">
-                          {elevator.direction === "up" ? "⬆️" : elevator.direction === "down" ? "⬇️" : "⏸️"}
-                        </div>
-                        {/* Passagers dans l'ascenseur */}
-                        {passengerCount > 0 && (
-                          <div className="flex flex-wrap gap-1 justify-center px-1">
-                            {passengersInElevator.slice(0, 4).map((passenger, idx) => (
-                              <div
-                                key={passenger.id}
-                                className="w-4 h-4 bg-yellow-400 rounded-full border border-yellow-300"
-                                title={`${passenger.name} → ${passenger.destinationFloor === 0 ? "RDC" : passenger.destinationFloor}`}
-                              />
-                            ))}
-                            {passengerCount > 4 && (
-                              <div className="w-4 h-4 bg-yellow-300 rounded-full border border-yellow-200 flex items-center justify-center text-xs text-yellow-900 font-bold">
-                                +{passengerCount - 4}
-                              </div>
-                            )}
-                          </div>
-                        )}
-                        {passengerCount === 0 && (
-                          <div className="text-white text-xs opacity-50">Vide</div>
-                        )}
-                      </div>
-                    )}
-                    
-                    {/* Passagers qui attendent à cet étage */}
-                    {waitingPassengers.filter(p => p.currentFloor === floorNum).length > 0 && (
-                      <div className="absolute left-44 top-1/2 -translate-y-1/2 flex gap-1 z-15">
-                        {waitingPassengers
-                          .filter(p => p.currentFloor === floorNum)
-                          .map((passenger) => (
-                            <div
-                              key={passenger.id}
-                              className="w-6 h-6 bg-orange-400 rounded-full border-2 border-orange-300 flex items-center justify-center text-xs font-bold text-orange-900"
-                              title={`${passenger.name} attend → ${passenger.destinationFloor === 0 ? "RDC" : passenger.destinationFloor}`}
-                            >
-                              👤
-                            </div>
-                          ))}
-                      </div>
-                    )}
-                    
-                    {/* Indicateurs de position */}
-                    {!isCurrentFloor && (
-                      <div className="absolute left-16 top-1/2 -translate-y-1/2 w-20 h-2 bg-slate-700 rounded"></div>
-                    )}
+                    {/* Indicateur de plancher */}
+                    <div className={`absolute left-[calc(25%+11rem)] w-16 h-1 rounded-full ${
+                      isCurrentFloor ? "bg-blue-400" : "bg-slate-600"
+                    }`}></div>
                   </div>
                 );
               })}
@@ -172,78 +332,80 @@ export default function ElevatorVisualization({
           </div>
         </div>
 
-        {/* Indicateur numérique */}
-        <div className="flex flex-col justify-center items-center">
-          <div className="mb-6">
-            <Text className="block text-center mb-4 text-slate-300 text-lg">Étage actuel</Text>
-            <div className="bg-black rounded-2xl p-8 border-4 border-slate-600 shadow-2xl">
-              <div className="text-center">
-                <div className="text-8xl font-bold text-red-500 font-mono tracking-wider" style={{ 
-                  textShadow: "0 0 20px rgba(239, 68, 68, 0.8), 0 0 40px rgba(239, 68, 68, 0.4)",
-                  fontFamily: "monospace"
-                }}>
-                  {elevator.currentFloor === 0 ? "RC" : elevator.currentFloor.toString().padStart(2, '0')}
-                </div>
+        {/* Panneau de contrôle de l'ascenseur */}
+        <div className="flex flex-col gap-4">
+          {/* Écran d'affichage de l'étage */}
+          <div className="bg-gradient-to-br from-black via-slate-900 to-black rounded-2xl p-6 border-2 border-slate-700/50 shadow-2xl shadow-red-500/20">
+            <Text className="block text-center mb-3 text-slate-400 text-xs font-semibold uppercase tracking-wider">Étage actuel</Text>
+            <div className="text-center">
+              <div className="text-7xl font-bold text-red-500 font-mono tracking-wider" style={{ 
+                textShadow: "0 0 30px rgba(239, 68, 68, 1), 0 0 60px rgba(239, 68, 68, 0.6)",
+                fontFamily: "monospace",
+                lineHeight: "1"
+              }}>
+                {elevator.currentFloor === 0 ? "RC" : elevator.currentFloor.toString().padStart(2, '0')}
               </div>
             </div>
           </div>
 
-          {/* Indicateur de direction */}
-          <div className="w-full mb-6">
-            <Text className="block text-center mb-4 text-slate-300 text-lg">Direction</Text>
-            <div className="flex justify-center gap-4">
-              <div className={`w-20 h-20 rounded-full flex items-center justify-center border-4 ${
+          {/* Indicateurs de direction */}
+          <div className="bg-gradient-to-br from-slate-800 to-slate-900 rounded-xl p-5 border-2 border-slate-700/50 shadow-lg">
+            <Text className="block text-center mb-4 text-slate-200 text-xs font-semibold uppercase tracking-wider">Direction</Text>
+            <div className="flex justify-center gap-3">
+              <div className={`w-16 h-16 rounded-full flex items-center justify-center border-2 transition-all ${
                 elevator.direction === "up" 
-                  ? "bg-green-500 border-green-400 shadow-lg shadow-green-500/50" 
-                  : "bg-slate-700 border-slate-600"
+                  ? "bg-gradient-to-br from-green-500 to-green-600 border-green-400 shadow-lg shadow-green-500/50 scale-110" 
+                  : "bg-slate-700/50 border-slate-600"
               }`}>
-                <UpOutlined className={`text-3xl ${elevator.direction === "up" ? "text-white" : "text-slate-500"}`} />
+                <UpOutlined className={`text-2xl ${elevator.direction === "up" ? "text-white" : "text-slate-500"}`} />
               </div>
-              <div className={`w-20 h-20 rounded-full flex items-center justify-center border-4 ${
+              <div className={`w-16 h-16 rounded-full flex items-center justify-center border-2 transition-all ${
                 elevator.direction === "down" 
-                  ? "bg-orange-500 border-orange-400 shadow-lg shadow-orange-500/50" 
-                  : "bg-slate-700 border-slate-600"
+                  ? "bg-gradient-to-br from-orange-500 to-orange-600 border-orange-400 shadow-lg shadow-orange-500/50 scale-110" 
+                  : "bg-slate-700/50 border-slate-600"
               }`}>
-                <DownOutlined className={`text-3xl ${elevator.direction === "down" ? "text-white" : "text-slate-500"}`} />
+                <DownOutlined className={`text-2xl ${elevator.direction === "down" ? "text-white" : "text-slate-500"}`} />
               </div>
-              <div className={`w-20 h-20 rounded-full flex items-center justify-center border-4 ${
+              <div className={`w-16 h-16 rounded-full flex items-center justify-center border-2 transition-all ${
                 elevator.status === "idle" 
-                  ? "bg-blue-500 border-blue-400 shadow-lg shadow-blue-500/50" 
-                  : "bg-slate-700 border-slate-600"
+                  ? "bg-gradient-to-br from-blue-500 to-blue-600 border-blue-400 shadow-lg shadow-blue-500/50 scale-110" 
+                  : "bg-slate-700/50 border-slate-600"
               }`}>
-                <PauseCircleOutlined className={`text-3xl ${elevator.status === "idle" ? "text-white" : "text-slate-500"}`} />
+                <PauseCircleOutlined className={`text-2xl ${elevator.status === "idle" ? "text-white" : "text-slate-500"}`} />
               </div>
             </div>
           </div>
 
           {/* Informations sur les passagers */}
-          <div className="w-full">
-            <Text className="block text-center mb-4 text-slate-300 text-lg">Passagers</Text>
-            <div className="bg-slate-700 rounded-lg p-4 border-2 border-slate-600">
-              <div className="text-center mb-2">
-                <Text className="text-white text-2xl font-bold">{passengerCount}</Text>
-                <Text className="block text-slate-400 text-sm">dans l'ascenseur</Text>
-              </div>
-              {passengersInElevator.length > 0 && (
-                <div className="space-y-2 mt-3">
-                  {passengersInElevator.map((passenger) => (
-                    <div
-                      key={passenger.id}
-                      className="bg-slate-600 rounded px-3 py-2 text-sm"
-                    >
-                      <Text className="text-yellow-300">👤 {passenger.name}</Text>
-                      <Text className="block text-slate-300 text-xs">
-                        → {passenger.destinationFloor === 0 ? "RDC" : `Étage ${passenger.destinationFloor}`}
-                      </Text>
-                    </div>
-                  ))}
-                </div>
-              )}
+          <div className="bg-gradient-to-br from-slate-800 to-slate-900 rounded-xl p-5 border-2 border-slate-700/50 shadow-lg">
+            <Text className="block text-center mb-4 text-slate-200 text-xs font-semibold uppercase tracking-wider">Passagers</Text>
+            <div className="text-center mb-4">
+              <Text className="text-white text-4xl font-bold bg-gradient-to-r from-yellow-400 to-yellow-500 bg-clip-text text-transparent">{passengerCount}</Text>
+              <Text className="block text-slate-400 text-xs mt-2">dans l'ascenseur</Text>
             </div>
+            {passengers.length > 0 && (
+              <div className="space-y-2 max-h-48 overflow-y-auto [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-thumb]:bg-slate-600 [&::-webkit-scrollbar-thumb]:rounded-full">
+                {passengers.map((passenger) => (
+                  <div
+                    key={passenger.id}
+                    className="bg-gradient-to-r from-slate-700/50 to-slate-700/30 rounded-lg px-3 py-2.5 text-sm border border-slate-600/50 hover:from-slate-600/50 hover:to-slate-600/30 transition-all"
+                  >
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 bg-gradient-to-br from-yellow-400 to-yellow-500 rounded-full flex items-center justify-center text-[10px] font-bold text-yellow-900">
+                        👤
+                      </div>
+                      <Text className="text-yellow-300 font-semibold">Passager</Text>
+                    </div>
+                    <Text className="block text-slate-300 text-xs mt-1.5 ml-8">
+                      → {passenger.destinationFloor === 0 ? "RDC" : `Étage ${passenger.destinationFloor}`}
+                    </Text>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>
     </Card>
   );
 }
-

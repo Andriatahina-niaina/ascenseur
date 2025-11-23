@@ -46,19 +46,28 @@ export async function POST(
       },
     });
 
-    // Faire sortir les passagers qui arrivent à leur destination
-    await prisma.passenger.updateMany({
+    // Faire sortir UN SEUL passager à la fois qui arrive à sa destination
+    const passengersToExit = await prisma.passenger.findFirst({
       where: {
         elevatorId: id,
         destinationFloor: targetFloor,
         status: "in_elevator",
       },
-      data: {
-        status: "completed",
-        exitedAt: new Date(),
-        elevatorId: null, // Le passager n'est plus dans l'ascenseur
+      orderBy: {
+        enteredAt: "asc", // Le premier entré sort en premier
       },
     });
+
+    if (passengersToExit) {
+      await prisma.passenger.update({
+        where: { id: passengersToExit.id },
+        data: {
+          status: "completed",
+          exitedAt: new Date(),
+          elevatorId: null, // Le passager n'est plus dans l'ascenseur
+        },
+      });
+    }
 
     // Faire entrer les passagers qui attendent à cet étage et qui ont une demande assignée à cet ascenseur
     const waitingPassengers = await prisma.passenger.findMany({
@@ -112,7 +121,7 @@ export async function POST(
       },
     });
 
-    // Vérifier s'il y a d'autres demandes en attente
+    // Vérifier s'il y a d'autres demandes en attente ou des passagers avec des destinations
     const remainingRequests = await prisma.request.findFirst({
       where: {
         elevatorId: id,
@@ -120,14 +129,68 @@ export async function POST(
           in: ["pending", "assigned", "in_progress"],
         },
       },
+      orderBy: [
+        { priority: "desc" },
+        { createdAt: "asc" },
+      ],
+    });
+
+    // Vérifier s'il y a des passagers dans l'ascenseur avec des destinations
+    const passengersInElevator = await prisma.passenger.findMany({
+      where: {
+        elevatorId: id,
+        status: "in_elevator",
+      },
       orderBy: {
-        priority: "desc",
-        createdAt: "asc",
+        destinationFloor: "asc",
       },
     });
 
-    if (!remainingRequests && newStatus !== "idle") {
-      // Plus de demandes, mettre l'ascenseur en idle
+    // Trouver la prochaine destination (soit d'une demande, soit d'un passager)
+    let nextDestination: number | null = null;
+    let nextDirection: "up" | "down" | null = null;
+
+    if (remainingRequests) {
+      nextDestination = remainingRequests.toFloor;
+      nextDirection = updatedElevator.currentFloor < remainingRequests.toFloor ? "up" : "down";
+    }
+
+    // Vérifier aussi les destinations des passagers dans l'ascenseur
+    if (passengersInElevator.length > 0) {
+      // Trouver la destination la plus proche dans la direction actuelle
+      const goingUp = passengersInElevator.filter(p => p.destinationFloor > updatedElevator.currentFloor);
+      const goingDown = passengersInElevator.filter(p => p.destinationFloor < updatedElevator.currentFloor);
+
+      if (elevator.direction === "up" && goingUp.length > 0) {
+        const closestUp = goingUp.reduce((closest, current) => 
+          current.destinationFloor < closest.destinationFloor ? current : closest
+        );
+        if (!nextDestination || closestUp.destinationFloor < nextDestination) {
+          nextDestination = closestUp.destinationFloor;
+          nextDirection = "up";
+        }
+      } else if (elevator.direction === "down" && goingDown.length > 0) {
+        const closestDown = goingDown.reduce((closest, current) => 
+          current.destinationFloor > closest.destinationFloor ? current : closest
+        );
+        if (!nextDestination || closestDown.destinationFloor > nextDestination) {
+          nextDestination = closestDown.destinationFloor;
+          nextDirection = "down";
+        }
+      } else if (!nextDestination) {
+        // Si pas de direction actuelle, choisir la destination la plus proche
+        const allDestinations = passengersInElevator.map(p => p.destinationFloor);
+        const closest = allDestinations.reduce((closest, current) => 
+          Math.abs(current - updatedElevator.currentFloor) < Math.abs(closest - updatedElevator.currentFloor) 
+            ? current : closest
+        );
+        nextDestination = closest;
+        nextDirection = updatedElevator.currentFloor < closest ? "up" : "down";
+      }
+    }
+
+    if (!nextDestination && newStatus !== "idle") {
+      // Plus de demandes ni de passagers, mettre l'ascenseur en idle
       await prisma.elevator.update({
         where: { id },
         data: {
@@ -135,9 +198,8 @@ export async function POST(
           direction: null,
         },
       });
-    } else if (remainingRequests) {
-      // Mettre à jour la direction selon la prochaine demande
-      const nextDirection = updatedElevator.currentFloor < remainingRequests.fromFloor ? "up" : "down";
+    } else if (nextDestination && nextDirection) {
+      // Mettre à jour la direction selon la prochaine destination
       await prisma.elevator.update({
         where: { id },
         data: {

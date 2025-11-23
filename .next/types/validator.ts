@@ -65,6 +65,15 @@ type RouteHandlerConfig<Route extends AppRouteHandlerRoutes = AppRouteHandlerRou
   type __Unused = __Check
 }
 
+// Validate ../../src/app/api/elevator/[id]/auto-move/route.ts
+{
+  type __IsExpected<Specific extends RouteHandlerConfig<"/api/elevator/[id]/auto-move">> = Specific
+  const handler = {} as typeof import("../../src/app/api/elevator/[id]/auto-move/route.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
 // Validate ../../src/app/api/elevator/[id]/move/route.ts
 {
   type __IsExpected<Specific extends RouteHandlerConfig<"/api/elevator/[id]/move">> = Specific
@@ -78,6 +87,15 @@ type RouteHandlerConfig<Route extends AppRouteHandlerRoutes = AppRouteHandlerRou
 {
   type __IsExpected<Specific extends RouteHandlerConfig<"/api/elevator">> = Specific
   const handler = {} as typeof import("../../src/app/api/elevator/route.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../src/app/api/passenger/[id]/route.ts
+{
+  type __IsExpected<Specific extends RouteHandlerConfig<"/api/passenger/[id]">> = Specific
+  const handler = {} as typeof import("../../src/app/api/passenger/[id]/route.js")
   type __Check = __IsExpected<typeof handler>
   // @ts-ignore
   type __Unused = __Check

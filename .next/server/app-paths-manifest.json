@@ -1,10 +1,6 @@
 {
   "/api/building/route": "app/api/building/route.js",
-  "/_not-found/page": "app/_not-found/page.js",
-  "/api/elevator/[id]/move/route": "app/api/elevator/[id]/move/route.js",
-  "/api/elevator/route": "app/api/elevator/route.js",
-  "/api/passenger/route": "app/api/passenger/route.js",
-  "/api/request/[id]/route": "app/api/request/[id]/route.js",
   "/api/request/route": "app/api/request/route.js",
+  "/api/elevator/route": "app/api/elevator/route.js",
   "/page": "app/page.js"
 }
