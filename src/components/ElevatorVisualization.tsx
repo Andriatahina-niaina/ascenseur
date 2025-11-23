@@ -27,19 +27,27 @@ interface ElevatorVisualizationProps {
   totalFloors: number;
   passengers: Passenger[]; // Passagers en mémoire
   onUpdate?: () => void;
+  isEmergency?: boolean;
 }
 
 export default function ElevatorVisualization({ 
   elevator, 
   totalFloors,
   passengers = [],
-  onUpdate
+  onUpdate,
+  isEmergency = false
 }: ElevatorVisualizationProps) {
   const passengerCount = passengers.length;
   const [isMoving, setIsMoving] = useState(false);
 
   // Système de mouvement automatique (seulement si l'ascenseur est déjà en mouvement)
   useEffect(() => {
+    // Ne pas bouger si en mode urgence/maintenance
+    if (isEmergency || elevator.status === "maintenance") {
+      setIsMoving(false);
+      return;
+    }
+    
     if (elevator.status === "moving_up" || elevator.status === "moving_down") {
       setIsMoving(true);
       const interval = setInterval(async () => {
@@ -150,7 +158,7 @@ export default function ElevatorVisualization({
     } else {
       setIsMoving(false);
     }
-  }, [elevator.status, elevator.id, elevator.currentFloor, elevator.direction, passengers, onUpdate]);
+  }, [elevator.status, elevator.id, elevator.currentFloor, elevator.direction, passengers, onUpdate, isEmergency]);
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -176,7 +184,7 @@ export default function ElevatorVisualization({
       case "moving_down":
         return "⬇️ Descente";
       case "maintenance":
-        return "⚠️ Maintenance";
+        return isEmergency ? "🚨 URGENCE" : "⚠️ Maintenance";
       default:
         return status;
     }
@@ -187,7 +195,11 @@ export default function ElevatorVisualization({
 
   return (
     <Card 
-      className="shadow-2xl bg-gradient-to-br from-slate-800 via-slate-800 to-slate-900 border-slate-700/50 backdrop-blur-sm"
+      className={`shadow-2xl bg-gradient-to-br from-slate-800 via-slate-800 to-slate-900 backdrop-blur-sm ${
+        isEmergency 
+          ? "border-4 border-red-500 animate-pulse" 
+          : "border-slate-700/50"
+      }`}
       title={
         <div className="flex items-center justify-between flex-wrap gap-3">
           <Space size="middle">
@@ -216,7 +228,11 @@ export default function ElevatorVisualization({
             </div>
             <Text className="text-slate-200 font-semibold text-lg">Vue du bâtiment</Text>
           </div>
-          <div className="relative bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 rounded-xl p-6 border-2 border-slate-700/50 shadow-2xl shadow-black/50" style={{ minHeight: "650px" }}>
+          <div className={`relative bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 rounded-xl p-6 border-2 shadow-2xl ${
+            isEmergency 
+              ? "border-red-500/80 shadow-red-500/50 animate-pulse" 
+              : "border-slate-700/50 shadow-black/50"
+          }`} style={{ minHeight: "650px" }}>
             {/* Structure du bâtiment */}
             <div className="relative h-full">
               {/* Shaft de l'ascenseur - Plus visible et réaliste */}
@@ -227,7 +243,11 @@ export default function ElevatorVisualization({
                 <div className="absolute right-1/4 top-0 bottom-0 w-px bg-slate-600/30"></div>
                 {/* Ascenseur mobile - Plus réaliste */}
                 <div 
-                  className="absolute left-3 right-3 bg-gradient-to-br from-blue-600 via-blue-500 to-blue-700 rounded-lg shadow-2xl border-4 border-blue-400 transition-all duration-1000 ease-in-out"
+                  className={`absolute left-3 right-3 rounded-lg shadow-2xl border-4 transition-all duration-1000 ease-in-out ${
+                    isEmergency
+                      ? "bg-gradient-to-br from-red-600 via-red-500 to-red-700 border-red-400 animate-pulse"
+                      : "bg-gradient-to-br from-blue-600 via-blue-500 to-blue-700 border-blue-400"
+                  }`}
                   style={{
                     height: `${100 / totalFloors}%`,
                     bottom: `${elevatorPosition}%`,

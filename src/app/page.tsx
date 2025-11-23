@@ -5,7 +5,8 @@ import { Card, Space, Typography, Button, Spin, message, InputNumber, Modal } fr
 import { 
   HomeOutlined,
   ReloadOutlined,
-  UserAddOutlined
+  UserAddOutlined,
+  ExclamationCircleOutlined
 } from "@ant-design/icons";
 import ElevatorVisualization from "@/components/ElevatorVisualization";
 import RequestList from "@/components/RequestList";
@@ -40,6 +41,10 @@ export default function Home() {
   const [passengers, setPassengers] = useState<Passenger[]>([]); // Passagers en mémoire
   const [addPassengerModalVisible, setAddPassengerModalVisible] = useState(false);
   const [destinationFloor, setDestinationFloor] = useState<number | null>(null);
+  const [isEmergency, setIsEmergency] = useState(false);
+  const [emergencyCallModalVisible, setEmergencyCallModalVisible] = useState(false);
+  const [fromFloor, setFromFloor] = useState<number | null>(null);
+  const [toFloor, setToFloor] = useState<number | null>(null);
 
   const fetchBuilding = useCallback(async () => {
     try {
@@ -57,6 +62,14 @@ export default function Home() {
           // Trouver l'ascenseur mis à jour depuis la base de données
           const updated = data.elevators.find((e: Elevator) => e.id === prev.id);
           if (updated) {
+            // Mettre à jour l'état d'urgence si l'ascenseur est en maintenance
+            if (updated.status === "maintenance") {
+              setIsEmergency(true);
+            } else if (updated.status !== "maintenance" && isEmergency) {
+              // Si l'ascenseur n'est plus en maintenance mais qu'on est encore en mode urgence local,
+              // on garde l'état local pour permettre la réinitialisation
+            }
+            
             // Si l'ascenseur local est en idle et qu'on a des passagers, 
             // et que l'ascenseur dans la DB est aussi en idle, on garde idle
             // Si l'ascenseur dans la DB est en mouvement, on accepte la mise à jour (déjà démarré)
@@ -136,9 +149,110 @@ export default function Home() {
     });
   };
 
+  // Fonction pour gérer l'appel d'urgence (demande d'ascenseur depuis un étage)
+  const handleEmergencyCall = () => {
+    if (!building) {
+      message.warning("Aucun bâtiment trouvé");
+      return;
+    }
+    setEmergencyCallModalVisible(true);
+  };
+
+  // Fonction pour créer une demande d'ascenseur
+  const handleCreateRequest = async () => {
+    if (!building) {
+      message.warning("Aucun bâtiment trouvé");
+      return;
+    }
+
+    if (fromFloor === null || fromFloor === undefined) {
+      message.warning("Veuillez sélectionner l'étage de départ");
+      return;
+    }
+
+    if (toFloor === null || toFloor === undefined) {
+      message.warning("Veuillez sélectionner l'étage de destination");
+      return;
+    }
+
+    if (fromFloor === toFloor) {
+      message.warning("L'étage de départ et l'étage de destination doivent être différents");
+      return;
+    }
+
+    try {
+      const response = await fetch("/api/request", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          buildingId: building.id,
+          fromFloor: fromFloor,
+          toFloor: toFloor,
+          priority: 1, // Priorité élevée pour les appels d'urgence
+          notes: "Appel d'urgence",
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to create request");
+      }
+
+      const newRequest = await response.json();
+      
+      message.success(
+        `Demande créée : Passager à l'étage ${fromFloor === 0 ? "RDC" : fromFloor} souhaite aller à l'étage ${toFloor === 0 ? "RDC" : toFloor}`
+      );
+
+      // Fermer le modal et réinitialiser
+      setEmergencyCallModalVisible(false);
+      setFromFloor(null);
+      setToFloor(null);
+
+      // Rafraîchir les données
+      fetchBuilding();
+    } catch (error) {
+      console.error("Error creating request:", error);
+      message.error("Erreur lors de la création de la demande");
+    }
+  };
+
+  // Fonction pour réinitialiser l'état d'urgence
+  const handleResetEmergency = async () => {
+    if (!selectedElevator) return;
+
+    try {
+      await fetch(`/api/elevator`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          id: selectedElevator.id,
+          status: "idle",
+          direction: null,
+        }),
+      });
+
+      setSelectedElevator(prev => prev ? {
+        ...prev,
+        status: "idle",
+        direction: null,
+      } : null);
+
+      setIsEmergency(false);
+      message.success("État d'urgence réinitialisé");
+      fetchBuilding();
+    } catch (error) {
+      console.error("Error resetting emergency:", error);
+      message.error("Erreur lors de la réinitialisation");
+    }
+  };
+
   // Gérer la sortie des passagers quand l'ascenseur arrive à leur destination
   useEffect(() => {
-    if (!selectedElevator) return;
+    if (!selectedElevator || isEmergency) return; // Ne pas gérer la sortie en mode urgence
 
     // Faire sortir les passagers qui arrivent à leur destination
     const passengersToExit = passengers
@@ -153,9 +267,14 @@ export default function Home() {
         message.success(`Passager sorti à l'étage ${selectedElevator.currentFloor === 0 ? "RDC" : selectedElevator.currentFloor}`);
       }, 500);
     }
-  }, [selectedElevator?.currentFloor, passengers]);
+  }, [selectedElevator?.currentFloor, passengers, isEmergency]);
 
   const handleAddPassenger = () => {
+    if (isEmergency || selectedElevator?.status === "maintenance") {
+      message.warning("L'ascenseur est en mode urgence. Veuillez réinitialiser l'urgence d'abord.");
+      return;
+    }
+
     if (destinationFloor === null || destinationFloor === undefined) {
       message.warning("Veuillez sélectionner un étage de destination");
       return;
@@ -229,6 +348,7 @@ export default function Home() {
                 onClick={() => setAddPassengerModalVisible(true)}
                 className="bg-gradient-to-r from-green-600 to-green-500 hover:from-green-700 hover:to-green-600 border-0 shadow-lg shadow-green-500/30 h-10 px-6 font-semibold"
                 size="large"
+                disabled={isEmergency || selectedElevator?.status === "maintenance"}
               >
                 Entrer dans l'ascenseur
               </Button>
@@ -242,12 +362,22 @@ export default function Home() {
                       : "bg-gradient-to-r from-gray-600 to-gray-500 shadow-gray-500/20 cursor-not-allowed"
                   }`}
                   size="large"
-                  disabled={selectedElevator.status !== "idle"}
+                  disabled={selectedElevator.status !== "idle" || isEmergency}
                   style={{ minWidth: "200px" }}
                 >
                   {selectedElevator.status === "idle" ? "▶️ Démarrer l'ascenseur" : "⏸️ Ascenseur en mouvement"}
                 </Button>
               ) : null}
+              <Button 
+                danger
+                type="primary"
+                icon={<ExclamationCircleOutlined />}
+                onClick={handleEmergencyCall}
+                className="bg-gradient-to-r from-red-600 to-red-500 hover:from-red-700 hover:to-red-600 border-0 shadow-lg shadow-red-500/30 h-10 px-6 font-semibold"
+                size="large"
+              >
+                🚨 Appel d'urgence
+              </Button>
               <Button 
                 icon={<ReloadOutlined />} 
                 onClick={fetchBuilding}
@@ -270,6 +400,7 @@ export default function Home() {
                 totalFloors={building.totalFloors}
                 passengers={passengers}
                 onUpdate={fetchBuilding}
+                isEmergency={isEmergency || selectedElevator.status === "maintenance"}
               />
             )}
           </div>
@@ -334,6 +465,75 @@ export default function Home() {
               </Text>
             </div>
           )}
+        </div>
+      </Modal>
+
+      {/* Modal pour l'appel d'urgence (demande d'ascenseur) */}
+      <Modal
+        title={
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-red-500/20 rounded-lg">
+              <ExclamationCircleOutlined className="text-red-400 text-xl" />
+            </div>
+            <span className="text-xl font-semibold text-white">Appel d'urgence - Demande d'ascenseur</span>
+          </div>
+        }
+        open={emergencyCallModalVisible}
+        onOk={handleCreateRequest}
+        onCancel={() => {
+          setEmergencyCallModalVisible(false);
+          setFromFloor(null);
+          setToFloor(null);
+        }}
+        okText="Créer la demande"
+        cancelText="Annuler"
+        okButtonProps={{ 
+          className: "bg-gradient-to-r from-red-600 to-red-500 hover:from-red-700 hover:to-red-600 border-0 shadow-lg shadow-red-500/30 h-10 px-6 font-semibold"
+        }}
+        cancelButtonProps={{
+          className: "h-10 px-6 font-semibold"
+        }}
+        className="[&_.ant-modal-content]:bg-slate-800 [&_.ant-modal-content]:border-slate-700"
+        width={500}
+      >
+        <div className="space-y-6 pt-4">
+          <div>
+            <Text strong className="block mb-3 text-slate-200 text-base">
+              À quel étage se trouve le passager ?
+            </Text>
+            <InputNumber
+              min={0}
+              max={building.totalFloors - 1}
+              value={fromFloor}
+              onChange={(value) => setFromFloor(value)}
+              placeholder="Sélectionner l'étage de départ"
+              className="w-full [&_.ant-input-number-input]:text-center [&_.ant-input-number-input]:text-lg [&_.ant-input-number-input]:font-semibold"
+              size="large"
+              formatter={(value) => value === 0 ? "RDC" : String(value)}
+              parser={(value) => (value === "RDC" ? 0 : Number(value))}
+            />
+          </div>
+          <div>
+            <Text strong className="block mb-3 text-slate-200 text-base">
+              À quel étage souhaite-t-il aller ?
+            </Text>
+            <InputNumber
+              min={0}
+              max={building.totalFloors - 1}
+              value={toFloor}
+              onChange={(value) => setToFloor(value)}
+              placeholder="Sélectionner l'étage de destination"
+              className="w-full [&_.ant-input-number-input]:text-center [&_.ant-input-number-input]:text-lg [&_.ant-input-number-input]:font-semibold"
+              size="large"
+              formatter={(value) => value === 0 ? "RDC" : String(value)}
+              parser={(value) => (value === "RDC" ? 0 : Number(value))}
+            />
+          </div>
+          <div className="bg-slate-700/50 rounded-lg p-3 border border-slate-600">
+            <Text className="text-slate-400 text-sm">
+              <span className="text-slate-200 font-semibold">Information :</span> Un signal sera envoyé indiquant qu'un passager se trouve à l'étage sélectionné et souhaite se rendre à sa destination. L'ascenseur le plus proche sera automatiquement assigné.
+            </Text>
+          </div>
         </div>
       </Modal>
     </div>
