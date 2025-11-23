@@ -50,9 +50,8 @@ export default function RequestList({ buildingId }: RequestListProps) {
 
   useEffect(() => {
     fetchRequests();
-    const interval = setInterval(fetchRequests, 3000);
-    return () => clearInterval(interval);
-  }, []);
+    // Suppression de l'actualisation automatique - seulement au chargement initial
+  }, [buildingId]);
 
   const getStatusColor = (status: string) => {
     switch (status) {
