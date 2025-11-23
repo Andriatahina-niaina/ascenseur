@@ -1,0 +1,10 @@
+{
+  "/api/building/route": "/api/building",
+  "/_not-found/page": "/_not-found",
+  "/api/elevator/[id]/move/route": "/api/elevator/[id]/move",
+  "/api/elevator/route": "/api/elevator",
+  "/api/passenger/route": "/api/passenger",
+  "/api/request/[id]/route": "/api/request/[id]",
+  "/api/request/route": "/api/request",
+  "/page": "/"
+}
